@@ -67,6 +67,11 @@ const LinkIcon = () => (
     <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" />
   </svg>
 )
+const BellIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" />
+  </svg>
+)
 
 /* ─── Helpers ────────────────────────────────────────────── */
 function formatTime(s: number) {
@@ -95,11 +100,51 @@ export default function App() {
   const [toast, setToast] = useState<string | null>(null)
   const [toastExiting, setToastExiting] = useState(false)
   const [incomingCallerId, setIncomingCallerId] = useState('')
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>(
+    typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'default'
+  )
 
   // Read ?call=PEER_ID from URL on load
   const autoCallTarget = useRef<string | null>(
     new URLSearchParams(window.location.search).get('call')
   )
+
+  /* ── Request Notification Permission ── */
+  const requestNotificationPermission = async () => {
+    if (!('Notification' in window)) {
+      showToast('Notifications not supported in this browser')
+      return
+    }
+    try {
+      const permission = await Notification.requestPermission()
+      setNotificationPermission(permission)
+      if (permission === 'granted') {
+        showToast('Notifications enabled!')
+      } else if (permission === 'denied') {
+        showToast('Notifications blocked by browser.')
+      }
+    } catch {
+      showToast('Error requesting permission.')
+    }
+  }
+
+  /* ── Simulate background notification after 5s ── */
+  const simulateBackgroundNotification = () => {
+    if (Notification.permission !== 'granted') {
+      showToast('Please enable notifications first!')
+      return
+    }
+    if (!('serviceWorker' in navigator) || !navigator.serviceWorker.controller) {
+      showToast('Service worker not active. Try reloading!')
+      return
+    }
+    navigator.serviceWorker.controller.postMessage({
+      type: 'SIMULATE_NOTIFICATION',
+      peerId: peerId || 'SimulatorPeer',
+      delay: 5000
+    })
+    showToast('Minimize/close tab now! Ringing in 5s...')
+  }
 
   const remoteVideoRef = useRef<HTMLVideoElement>(null)
   const localVideoRef = useRef<HTMLVideoElement>(null)
@@ -187,6 +232,31 @@ export default function App() {
       pendingCall.current = call
       setIncomingCallerId(call.peer)
       setCallState('receiving')
+
+      // Background tab notification
+      if (document.hidden && Notification.permission === 'granted') {
+        if ('serviceWorker' in navigator) {
+          navigator.serviceWorker.ready.then((reg) => {
+            reg.showNotification('Incoming Call', {
+              body: `Incoming call from ${call.peer}`,
+              icon: '/favicon.svg',
+              vibrate: [200, 100, 200],
+              tag: 'incoming-call',
+              data: { url: `/?call=${call.peer}` }
+            })
+          }).catch(() => {
+            new Notification('Incoming Call', {
+              body: `Incoming call from ${call.peer}`,
+              icon: '/favicon.svg',
+            })
+          })
+        } else {
+          new Notification('Incoming Call', {
+            body: `Incoming call from ${call.peer}`,
+            icon: '/favicon.svg',
+          })
+        }
+      }
     })
 
     peer.on('error', (err) => {
@@ -379,6 +449,43 @@ export default function App() {
                 <div className="spinner" />
                 Generating ID…
               </div>
+            )}
+          </div>
+        </div>
+
+        <div className="divider" />
+
+        {/* Notifications */}
+        <div>
+          <div className="section-label">Desktop Alerts</div>
+          <div className="id-card notification-card">
+            <div className="notification-info">
+              <div className="notification-status-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span className="status-label" style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Status</span>
+                <span className={`badge-status ${notificationPermission}`} style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  padding: '2px 8px',
+                  borderRadius: 20,
+                  textTransform: 'capitalize',
+                  background: notificationPermission === 'granted' ? 'rgba(16,185,129,0.1)' : notificationPermission === 'denied' ? 'rgba(239,68,68,0.1)' : 'rgba(255,255,255,0.05)',
+                  color: notificationPermission === 'granted' ? '#10b981' : notificationPermission === 'denied' ? '#ef4444' : 'var(--text-muted)'
+                }}>
+                  {notificationPermission === 'granted' ? 'Active' : notificationPermission === 'denied' ? 'Blocked' : 'Off'}
+                </span>
+              </div>
+              <p className="notification-description" style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.5 }}>
+                Receive call alerts when this browser tab is in the background.
+              </p>
+            </div>
+            {notificationPermission !== 'granted' ? (
+              <button className="btn btn-primary" onClick={requestNotificationPermission} style={{ marginTop: 10, width: '100%' }}>
+                <BellIcon /> Enable Alerts
+              </button>
+            ) : (
+              <button className="btn btn-ghost" onClick={simulateBackgroundNotification} style={{ marginTop: 10, width: '100%', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                <BellIcon /> Test Background (5s)
+              </button>
             )}
           </div>
         </div>

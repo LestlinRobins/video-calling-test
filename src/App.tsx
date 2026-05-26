@@ -134,16 +134,36 @@ export default function App() {
       showToast('Please enable notifications first!')
       return
     }
-    if (!('serviceWorker' in navigator) || !navigator.serviceWorker.controller) {
-      showToast('Service worker not active. Try reloading!')
-      return
-    }
-    navigator.serviceWorker.controller.postMessage({
-      type: 'SIMULATE_NOTIFICATION',
-      peerId: peerId || 'SimulatorPeer',
-      delay: 5000
-    })
     showToast('Minimize/close tab now! Ringing in 5s...')
+    
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.ready.then((reg) => {
+        setTimeout(() => {
+          reg.showNotification('Incoming Call (Simulator)', {
+            body: `Call from Peer: ${peerId || 'SimulatorPeer'}`,
+            icon: '/favicon.svg',
+            vibrate: [200, 100, 200],
+            data: {
+              url: `/?call=${peerId || 'SimulatorPeer'}`
+            }
+          } as any)
+        }, 5000)
+      }).catch(() => {
+        setTimeout(() => {
+          new Notification('Incoming Call (Simulator)', {
+            body: `Call from Peer: ${peerId || 'SimulatorPeer'}`,
+            icon: '/favicon.svg',
+          })
+        }, 5000)
+      })
+    } else {
+      setTimeout(() => {
+        new Notification('Incoming Call (Simulator)', {
+          body: `Call from Peer: ${peerId || 'SimulatorPeer'}`,
+          icon: '/favicon.svg',
+        })
+      }, 5000)
+    }
   }
 
   const remoteVideoRef = useRef<HTMLVideoElement>(null)
@@ -234,7 +254,7 @@ export default function App() {
       setCallState('receiving')
 
       // Background tab notification
-      if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted' && document.hidden) {
+      if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
         if ('serviceWorker' in navigator) {
           navigator.serviceWorker.ready.then((reg) => {
             reg.showNotification('Incoming Call', {

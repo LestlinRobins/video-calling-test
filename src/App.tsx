@@ -104,10 +104,64 @@ export default function App() {
     typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'default'
   )
 
-  // Read ?call=PEER_ID from URL on load
+  // Read ?call=PEER_ID from URL on load (share link)
   const autoCallTarget = useRef<string | null>(
     new URLSearchParams(window.location.search).get('call')
   )
+
+  // Read ?caller=PEER_ID from URL on load (notification click — dial them back)
+  const autoDialBackTarget = useRef<string | null>(
+    new URLSearchParams(window.location.search).get('caller')
+  )
+
+  /* ── urlBase64ToUint8Array helper for VAPID key ── */
+  function urlBase64ToUint8Array(base64String: string) {
+    const padding = '='.repeat((4 - (base64String.length % 4)) % 4)
+    const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/')
+    const rawData = atob(base64)
+    return Uint8Array.from([...rawData].map(c => c.charCodeAt(0)))
+  }
+
+  /* ── Subscribe to push notifications via VAPID server ── */
+  const subscribeToPush = async (pId: string) => {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return
+    if (!('Notification' in window) || Notification.permission !== 'granted') return
+    try {
+      const keyRes = await fetch('/push/vapid-public-key')
+      if (!keyRes.ok) return
+      const { publicKey } = await keyRes.json()
+      const reg = await navigator.serviceWorker.ready
+      let sub = await reg.pushManager.getSubscription()
+      if (!sub) {
+        sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(publicKey)
+        })
+      }
+      await fetch('/push/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ peerId: pId, subscription: sub })
+      })
+      console.log('[push] Subscribed to push for peer:', pId)
+    } catch (err) {
+      console.warn('[push] Push subscription failed:', err)
+    }
+  }
+
+  /* ── Notify callee via push server when peer is unavailable ── */
+  const notifyCallee = async (targetPeerId: string, callerPeerId: string): Promise<boolean> => {
+    try {
+      const res = await fetch('/push/notify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetPeerId, callerPeerId })
+      })
+      return res.ok
+    } catch {
+      return false
+    }
+  }
 
   /* ── Request Notification Permission ── */
   const requestNotificationPermission = async () => {
@@ -120,6 +174,8 @@ export default function App() {
       setNotificationPermission(permission)
       if (permission === 'granted') {
         showToast('Notifications enabled!')
+        // Subscribe to push now that we have permission
+        if (peerId) subscribeToPush(peerId)
       } else if (permission === 'denied') {
         showToast('Notifications blocked by browser.')
       }
@@ -244,9 +300,15 @@ export default function App() {
     peer.on('open', (id) => {
       setPeerId(id)
       localStorage.setItem('video_call_peer_id', id)
+      // Subscribe to push notifications
+      subscribeToPush(id)
       // Auto-dial if page was opened via a share link
       if (autoCallTarget.current) {
         setRemotePeerId(autoCallTarget.current)
+      }
+      // Auto-dial back if page was opened from a push notification click
+      if (autoDialBackTarget.current) {
+        setRemotePeerId(autoDialBackTarget.current)
       }
     })
 
@@ -283,22 +345,58 @@ export default function App() {
 
     peer.on('error', (err) => {
       console.error('Peer error:', err)
-      showToast(`Connection error: ${err.type}`)
+      if ((err as any).type === 'peer-unavailable') {
+        const targetId = remotePeerId.trim()
+        const myId = peerInstance.current?.id || peerId
+        if (targetId && myId) {
+          notifyCallee(targetId, myId).then(notified => {
+            if (notified) {
+              showToast('They\'re offline — sent a ring notification. They\'ll call back shortly.')
+            } else {
+              showToast('Peer unavailable and not subscribed to notifications.')
+            }
+          })
+        } else {
+          showToast('Peer unavailable')
+        }
+      } else {
+        showToast(`Connection error: ${(err as any).type}`)
+      }
       cleanupCall()
     })
 
     return () => { peer.destroy(); peerInstance.current = null }
   }, [showToast, cleanupCall])
 
-  /* ── Auto-dial once peerId + remotePeerId are both ready ── */
+  /* ── Auto-dial once peerId + remotePeerId are both ready (share link) ── */
   useEffect(() => {
     if (autoCallTarget.current && peerId && remotePeerId === autoCallTarget.current && callState === 'idle') {
-      autoCallTarget.current = null // only fire once
-      // Small delay so peer connection is fully stable
+      autoCallTarget.current = null
       setTimeout(() => makeCall(), 600)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [peerId, remotePeerId])
+
+  /* ── Auto-dial-back once peerId + remotePeerId ready (notification click) ── */
+  useEffect(() => {
+    if (autoDialBackTarget.current && peerId && remotePeerId === autoDialBackTarget.current && callState === 'idle') {
+      autoDialBackTarget.current = null
+      setTimeout(() => makeCall(), 800)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [peerId, remotePeerId])
+
+  /* ── Listen for SW postMessage (notification click on already-open tab) ── */
+  useEffect(() => {
+    const handler = (event: MessageEvent) => {
+      if (event.data?.type === 'INCOMING_CALL_ANSWER' && event.data.callerPeerId) {
+        setRemotePeerId(event.data.callerPeerId)
+        showToast(`Incoming call from ${event.data.callerPeerId} — tap Call to answer!`)
+      }
+    }
+    navigator.serviceWorker?.addEventListener('message', handler)
+    return () => navigator.serviceWorker?.removeEventListener('message', handler)
+  }, [showToast])
 
   /* ── Make outgoing call ── */
   const makeCall = async () => {

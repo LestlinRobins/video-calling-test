@@ -4,6 +4,7 @@ import cors from 'cors'
 import { config } from 'dotenv'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
+import { readFileSync, writeFileSync } from 'fs'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -19,8 +20,29 @@ webpush.setVapidDetails(
   process.env.VAPID_PRIVATE_KEY
 )
 
-// In-memory subscription store: Map<peerId, PushSubscription>
-const subscriptions = new Map()
+// ── File-backed subscription store ─────────────────────────────────────────
+const STORE_PATH = join(__dirname, 'subscriptions.json')
+
+function loadSubscriptions() {
+  try {
+    const data = JSON.parse(readFileSync(STORE_PATH, 'utf8'))
+    return new Map(Object.entries(data))
+  } catch {
+    return new Map()
+  }
+}
+
+function saveSubscriptions(subs) {
+  try {
+    writeFileSync(STORE_PATH, JSON.stringify(Object.fromEntries(subs), null, 2))
+  } catch (e) {
+    console.error('[push] Failed to save subscriptions:', e.message)
+  }
+}
+
+const subscriptions = loadSubscriptions()
+console.log(`[push] Loaded ${subscriptions.size} subscription(s) from disk`)
+
 
 // ── GET /vapid-public-key ── Return public key for frontend subscription
 app.get('/vapid-public-key', (req, res) => {
@@ -34,6 +56,7 @@ app.post('/subscribe', (req, res) => {
     return res.status(400).json({ error: 'Missing peerId or subscription' })
   }
   subscriptions.set(peerId, subscription)
+  saveSubscriptions(subscriptions)
   console.log(`[push] Subscribed: ${peerId} (total: ${subscriptions.size})`)
   res.status(201).json({ success: true })
 })
@@ -43,6 +66,7 @@ app.post('/unsubscribe', (req, res) => {
   const { peerId } = req.body
   if (peerId) {
     subscriptions.delete(peerId)
+    saveSubscriptions(subscriptions)
     console.log(`[push] Unsubscribed: ${peerId}`)
   }
   res.json({ success: true })
@@ -78,6 +102,7 @@ app.post('/notify', async (req, res) => {
     if (err.statusCode === 410 || err.statusCode === 404) {
       // Subscription expired — clean up
       subscriptions.delete(targetPeerId)
+      saveSubscriptions(subscriptions)
     }
     res.status(500).json({ error: 'Failed to send push notification' })
   }

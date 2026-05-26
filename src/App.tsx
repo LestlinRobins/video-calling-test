@@ -103,6 +103,7 @@ export default function App() {
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>(
     typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'default'
   )
+  const [pushSubscribed, setPushSubscribed] = useState(false)
 
   // Read ?call=PEER_ID from URL on load (share link)
   const autoCallTarget = useRef<string | null>(
@@ -123,14 +124,15 @@ export default function App() {
   }
 
   /* ── Subscribe to push notifications via VAPID server ── */
-  const subscribeToPush = async (pId: string) => {
-    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return
-    if (!('Notification' in window) || Notification.permission !== 'granted') return
+  const subscribeToPush = async (pId: string): Promise<boolean> => {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return false
+    if (!('Notification' in window) || Notification.permission !== 'granted') return false
     try {
       const keyRes = await fetch('/push/vapid-public-key')
-      if (!keyRes.ok) return
+      if (!keyRes.ok) throw new Error('Server unreachable')
       const { publicKey } = await keyRes.json()
       const reg = await navigator.serviceWorker.ready
+      // Always force a fresh subscription so stale ones are replaced
       let sub = await reg.pushManager.getSubscription()
       if (!sub) {
         sub = await reg.pushManager.subscribe({
@@ -138,14 +140,19 @@ export default function App() {
           applicationServerKey: urlBase64ToUint8Array(publicKey)
         })
       }
-      await fetch('/push/subscribe', {
+      const res = await fetch('/push/subscribe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ peerId: pId, subscription: sub })
       })
-      console.log('[push] Subscribed to push for peer:', pId)
+      const ok = res.ok
+      setPushSubscribed(ok)
+      if (ok) console.log('[push] Subscribed to push for peer:', pId)
+      return ok
     } catch (err) {
       console.warn('[push] Push subscription failed:', err)
+      setPushSubscribed(false)
+      return false
     }
   }
 
@@ -173,9 +180,8 @@ export default function App() {
       const permission = await Notification.requestPermission()
       setNotificationPermission(permission)
       if (permission === 'granted') {
-        showToast('Notifications enabled!')
-        // Subscribe to push now that we have permission
-        if (peerId) subscribeToPush(peerId)
+        const ok = await subscribeToPush(peerId)
+        showToast(ok ? 'Notifications enabled & registered!' : 'Notifications enabled — push server may be offline.')
       } else if (permission === 'denied') {
         showToast('Notifications blocked by browser.')
       }
@@ -608,9 +614,27 @@ export default function App() {
                 <BellIcon /> Enable Alerts
               </button>
             ) : (
-              <button className="btn btn-ghost" onClick={simulateBackgroundNotification} style={{ marginTop: 10, width: '100%', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.08)' }}>
-                <BellIcon /> Test Background (5s)
-              </button>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: pushSubscribed ? '#10b981' : '#f59e0b' }}>
+                  <span style={{ width: 7, height: 7, borderRadius: '50%', background: pushSubscribed ? '#10b981' : '#f59e0b', display: 'inline-block', flexShrink: 0, boxShadow: pushSubscribed ? '0 0 6px #10b981' : '0 0 6px #f59e0b' }} />
+                  {pushSubscribed ? 'Registered with push server' : 'Not registered — push server may be offline or need re-register'}
+                </div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {!pushSubscribed && (
+                    <button
+                      className="btn btn-primary"
+                      onClick={() => subscribeToPush(peerId).then(ok => showToast(ok ? 'Re-registered! You\'ll receive call alerts.' : 'Failed — is the push server running?'))}
+                      style={{ flex: 1 }}
+                      disabled={!peerId}
+                    >
+                      <BellIcon /> Re-register
+                    </button>
+                  )}
+                  <button className="btn btn-ghost" onClick={simulateBackgroundNotification} style={{ flex: 1, background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                    <BellIcon /> Test (5s)
+                  </button>
+                </div>
+              </div>
             )}
           </div>
         </div>

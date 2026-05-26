@@ -61,6 +61,12 @@ const UsersIcon = () => (
     <path d="M23 21v-2a4 4 0 00-3-3.87" /><path d="M16 3.13a4 4 0 010 7.75" />
   </svg>
 )
+const LinkIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" />
+    <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" />
+  </svg>
+)
 
 /* ─── Helpers ────────────────────────────────────────────── */
 function formatTime(s: number) {
@@ -74,6 +80,8 @@ function formatTime(s: number) {
 type CallState = 'idle' | 'calling' | 'receiving' | 'in-call'
 
 /* ─── App ────────────────────────────────────────────────── */
+const BASE_URL = 'https://video-calling-test.vercel.app'
+
 export default function App() {
   const [peerId, setPeerId] = useState('')
   const [remotePeerId, setRemotePeerId] = useState('')
@@ -83,9 +91,15 @@ export default function App() {
   const [isSharingScreen, setIsSharingScreen] = useState(false)
   const [callDuration, setCallDuration] = useState(0)
   const [copied, setCopied] = useState(false)
+  const [linkCopied, setLinkCopied] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
   const [toastExiting, setToastExiting] = useState(false)
   const [incomingCallerId, setIncomingCallerId] = useState('')
+
+  // Read ?call=PEER_ID from URL on load
+  const autoCallTarget = useRef<string | null>(
+    new URLSearchParams(window.location.search).get('call')
+  )
 
   const remoteVideoRef = useRef<HTMLVideoElement>(null)
   const localVideoRef = useRef<HTMLVideoElement>(null)
@@ -161,7 +175,13 @@ export default function App() {
     const peer = new Peer()
     peerInstance.current = peer
 
-    peer.on('open', (id) => setPeerId(id))
+    peer.on('open', (id) => {
+      setPeerId(id)
+      // Auto-dial if page was opened via a share link
+      if (autoCallTarget.current) {
+        setRemotePeerId(autoCallTarget.current)
+      }
+    })
 
     peer.on('call', (call) => {
       pendingCall.current = call
@@ -177,6 +197,16 @@ export default function App() {
 
     return () => { peer.destroy(); peerInstance.current = null }
   }, [showToast, cleanupCall])
+
+  /* ── Auto-dial once peerId + remotePeerId are both ready ── */
+  useEffect(() => {
+    if (autoCallTarget.current && peerId && remotePeerId === autoCallTarget.current && callState === 'idle') {
+      autoCallTarget.current = null // only fire once
+      // Small delay so peer connection is fully stable
+      setTimeout(() => makeCall(), 600)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [peerId, remotePeerId])
 
   /* ── Make outgoing call ── */
   const makeCall = async () => {
@@ -279,6 +309,17 @@ export default function App() {
       setCopied(true)
       showToast('Peer ID copied!')
       setTimeout(() => setCopied(false), 2000)
+    })
+  }
+
+  /* ── Copy share link ── */
+  const copyShareLink = () => {
+    if (!peerId) return
+    const link = `${BASE_URL}/?call=${peerId}`
+    navigator.clipboard.writeText(link).then(() => {
+      setLinkCopied(true)
+      showToast('Share link copied! Send it to your contact.')
+      setTimeout(() => setLinkCopied(false), 2000)
     })
   }
 
@@ -412,9 +453,36 @@ export default function App() {
           </>
         )}
 
-        {/* Tips when idle */}
+        {/* Share link + tips when idle */}
         {!isBusy && (
           <>
+            <div className="divider" />
+
+            {/* Share link card */}
+            {peerId && (
+              <div>
+                <div className="section-label">Invite via Link</div>
+                <div className="id-card">
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10, lineHeight: 1.5 }}>
+                    Anyone who opens this link will be connected directly to you.
+                  </div>
+                  <div className="id-row" style={{ background: 'rgba(99,102,241,0.06)', borderRadius: 8, padding: '8px 10px' }}>
+                    <span style={{ fontSize: 11, color: 'var(--accent-secondary)', wordBreak: 'break-all', fontFamily: 'monospace', flex: 1 }}>
+                      {BASE_URL}/?call={peerId}
+                    </span>
+                  </div>
+                  <button
+                    className={`btn ${linkCopied ? 'btn-ghost' : 'btn-primary'}`}
+                    style={{ marginTop: 10 }}
+                    onClick={copyShareLink}
+                  >
+                    {linkCopied ? <CheckIcon /> : <LinkIcon />}
+                    {linkCopied ? 'Link Copied!' : 'Copy Share Link'}
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div className="divider" />
             <div style={{ color: 'var(--text-muted)', fontSize: 12, lineHeight: 1.7 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
@@ -422,9 +490,9 @@ export default function App() {
                 <span style={{ fontWeight: 600, color: 'var(--text-secondary)', fontSize: 13 }}>How to connect</span>
               </div>
               <ol style={{ paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <li>Share your Peer ID with the person you want to call</li>
-                <li>Enter their Peer ID in the field above</li>
-                <li>Click <strong style={{ color: 'var(--accent-secondary)' }}>Call</strong> to start</li>
+                <li>Copy your share link above and send it to a contact</li>
+                <li>They open the link — the call starts automatically</li>
+                <li>Or enter their Peer ID manually and click <strong style={{ color: 'var(--accent-secondary)' }}>Call</strong></li>
               </ol>
             </div>
           </>

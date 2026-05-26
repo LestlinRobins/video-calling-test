@@ -237,8 +237,8 @@ export default function App() {
 
   /* ── PeerJS init ── */
   useEffect(() => {
-    const savedId = localStorage.getItem('video_call_peer_id') || undefined;
-    const peer = new Peer(savedId)
+    const savedId = localStorage.getItem('video_call_peer_id')
+    const peer = savedId ? new Peer(savedId) : new Peer()
     peerInstance.current = peer
 
     peer.on('open', (id) => {

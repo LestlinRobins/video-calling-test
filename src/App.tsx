@@ -229,6 +229,8 @@ export default function App() {
   const localStream = useRef<MediaStream | null>(null)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const pendingCall = useRef<MediaConnection | null>(null)
+  // Ref mirror of remotePeerId to avoid stale closures in peer.on('error')
+  const remotePeerIdRef = useRef('')
 
   /* ── Toast helper ── */
   const showToast = useCallback((msg: string) => {
@@ -346,7 +348,7 @@ export default function App() {
     peer.on('error', (err) => {
       console.error('Peer error:', err)
       if ((err as any).type === 'peer-unavailable') {
-        const targetId = remotePeerId.trim()
+        const targetId = remotePeerIdRef.current.trim()
         const myId = peerInstance.current?.id || peerId
         if (targetId && myId) {
           notifyCallee(targetId, myId).then(notified => {
@@ -397,6 +399,9 @@ export default function App() {
     navigator.serviceWorker?.addEventListener('message', handler)
     return () => navigator.serviceWorker?.removeEventListener('message', handler)
   }, [showToast])
+
+  /* ── Keep remotePeerIdRef in sync with state (avoids stale closure in peer.on) ── */
+  useEffect(() => { remotePeerIdRef.current = remotePeerId }, [remotePeerId])
 
   /* ── Make outgoing call ── */
   const makeCall = async () => {

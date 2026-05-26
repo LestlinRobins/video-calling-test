@@ -130,7 +130,7 @@ export default function App() {
 
   /* ── Simulate background notification after 5s ── */
   const simulateBackgroundNotification = () => {
-    if (Notification.permission !== 'granted') {
+    if (!('Notification' in window) || Notification.permission !== 'granted') {
       showToast('Please enable notifications first!')
       return
     }
@@ -234,7 +234,7 @@ export default function App() {
       setCallState('receiving')
 
       // Background tab notification
-      if (document.hidden && Notification.permission === 'granted') {
+      if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted' && document.hidden) {
         if ('serviceWorker' in navigator) {
           navigator.serviceWorker.ready.then((reg) => {
             reg.showNotification('Incoming Call', {
@@ -243,7 +243,7 @@ export default function App() {
               vibrate: [200, 100, 200],
               tag: 'incoming-call',
               data: { url: `/?call=${call.peer}` }
-            })
+            } as any)
           }).catch(() => {
             new Notification('Incoming Call', {
               body: `Incoming call from ${call.peer}`,

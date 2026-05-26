@@ -237,11 +237,13 @@ export default function App() {
 
   /* ── PeerJS init ── */
   useEffect(() => {
-    const peer = new Peer()
+    const savedId = localStorage.getItem('video_call_peer_id') || undefined;
+    const peer = new Peer(savedId)
     peerInstance.current = peer
 
     peer.on('open', (id) => {
       setPeerId(id)
+      localStorage.setItem('video_call_peer_id', id)
       // Auto-dial if page was opened via a share link
       if (autoCallTarget.current) {
         setRemotePeerId(autoCallTarget.current)

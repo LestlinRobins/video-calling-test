@@ -77,20 +77,7 @@ app.post('/unsubscribe', (req, res) => {
   res.json({ success: true })
 })
 
-// ── Active Ring Sessions Store ──────────────────────────────────────────────
-const activeRings = new Map()
-
-// Helper to clean up an active ring
-function stopRinging(targetPeerId) {
-  const ring = activeRings.get(targetPeerId)
-  if (ring) {
-    clearInterval(ring.intervalId)
-    activeRings.delete(targetPeerId)
-    console.log(`[push] Stopped ringing for ${targetPeerId}`)
-  }
-}
-
-// ── POST /notify ── Send repeating push notifications to simulate phone ringing
+// ── POST /notify ── Send a single push notification to start ringing
 app.post('/notify', async (req, res) => {
   const { targetPeerId, callerPeerId } = req.body
   if (!targetPeerId || !callerPeerId) {
@@ -103,57 +90,51 @@ app.post('/notify', async (req, res) => {
     return res.status(404).json({ error: 'Peer not subscribed to push', available: false })
   }
 
-  // Stop any existing ringing interval for this peer
-  stopRinging(targetPeerId)
-
   const payload = JSON.stringify({
     title: 'Incoming Call',
     body: `Incoming call from ${callerPeerId}`,
     callerPeerId,
     targetPeerId,
+    action: 'ring',
     url: `/?caller=${callerPeerId}`
   })
 
-  const sendPush = async () => {
-    try {
-      await webpush.sendNotification(subscription, payload)
-      console.log(`[push] Sent alert to ${targetPeerId} (caller: ${callerPeerId})`)
-    } catch (err) {
-      console.error('[push] Send error during ring:', err.statusCode, err.body)
-      if (err.statusCode === 410 || err.statusCode === 404) {
-        subscriptions.delete(targetPeerId)
-        saveSubscriptions(subscriptions)
-      }
-      stopRinging(targetPeerId)
+  try {
+    await webpush.sendNotification(subscription, payload)
+    console.log(`[push] Sent ring alert to ${targetPeerId} (caller: ${callerPeerId})`)
+    res.json({ success: true })
+  } catch (err) {
+    console.error('[push] Send error:', err.statusCode, err.body)
+    if (err.statusCode === 410 || err.statusCode === 404) {
+      subscriptions.delete(targetPeerId)
+      saveSubscriptions(subscriptions)
     }
+    res.status(500).json({ error: 'Failed to send push notification' })
   }
-
-  // Send first push immediately
-  await sendPush()
-
-  // Repeat push every 4 seconds, timing out after 30 seconds (8 attempts total)
-  let attempts = 1
-  const intervalId = setInterval(async () => {
-    attempts++
-    if (attempts > 8) {
-      console.log(`[push] Ringing timed out for ${targetPeerId}`)
-      stopRinging(targetPeerId)
-      return
-    }
-    await sendPush()
-  }, 4000)
-
-  activeRings.set(targetPeerId, { intervalId })
-  res.json({ success: true })
 })
 
-// ── POST /cancel-notify ── Stop ringing a target peer
-app.post('/cancel-notify', (req, res) => {
+// ── POST /cancel-notify ── Send a silent push notification to cancel the active call banner
+app.post('/cancel-notify', async (req, res) => {
   const { targetPeerId } = req.body
   if (!targetPeerId) {
     return res.status(400).json({ error: 'Missing targetPeerId' })
   }
-  stopRinging(targetPeerId)
+
+  const subscription = subscriptions.get(targetPeerId)
+  if (!subscription) {
+    return res.json({ success: true })
+  }
+
+  const payload = JSON.stringify({
+    action: 'cancel'
+  })
+
+  try {
+    await webpush.sendNotification(subscription, payload)
+    console.log(`[push] Sent cancel command to ${targetPeerId}`)
+  } catch (err) {
+    console.warn('[push] Cancel send error:', err.statusCode)
+  }
   res.json({ success: true })
 })
 

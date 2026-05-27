@@ -12,7 +12,8 @@ self.addEventListener('push', (event) => {
     title: 'Incoming Call',
     body: 'Incoming call — tap to answer',
     callerPeerId: null,
-    url: '/'
+    url: '/',
+    action: 'ring'
   }
 
   if (event.data) {
@@ -23,9 +24,21 @@ self.addEventListener('push', (event) => {
     }
   }
 
-  // Create a sustained vibration pattern (vibrate 1200ms, pause 800ms, repeat 10 times = 20 seconds)
+  // Handle call cancellation from push server
+  if (data.action === 'cancel') {
+    event.waitUntil(
+      self.registration.getNotifications({ tag: 'incoming-call' }).then((notifications) => {
+        for (const notification of notifications) {
+          notification.close()
+        }
+      })
+    )
+    return
+  }
+
+  // Create a sustained vibration pattern (vibrate 1200ms, pause 800ms, repeat 15 times = 30 seconds)
   const vibratePattern = []
-  for (let i = 0; i < 10; i++) {
+  for (let i = 0; i < 15; i++) {
     vibratePattern.push(1200, 800)
   }
 
@@ -64,10 +77,19 @@ self.addEventListener('push', (event) => {
 self.addEventListener('notificationclick', (event) => {
   event.notification.close()
 
-  if (event.action === 'decline') return
-
   const callerPeerId = event.notification.data?.callerPeerId
   const targetUrl = event.notification.data?.url || '/'
+
+  if (event.action === 'decline') {
+    event.waitUntil(
+      self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+        for (const client of clientList) {
+          client.postMessage({ type: 'INCOMING_CALL_DECLINE', callerPeerId })
+        }
+      })
+    )
+    return
+  }
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {

@@ -459,16 +459,28 @@ export default function App() {
     const handler = (event: MessageEvent) => {
       if (event.data?.type === 'INCOMING_CALL_ANSWER' && event.data.callerPeerId) {
         setRemotePeerId(event.data.callerPeerId)
-        showToast(`Incoming call from ${event.data.callerPeerId} — tap Call to answer!`)
+        if (callState === 'receiving' && pendingCall.current) {
+          // If we already have the incoming WebRTC call overlay active, accept it directly!
+          answerCall()
+        } else {
+          // Otherwise dial them back
+          showToast(`Answering call from ${event.data.callerPeerId}...`)
+          autoDialBackTarget.current = event.data.callerPeerId
+          if (callState === 'idle') {
+            setTimeout(() => makeCall(), 500)
+          }
+        }
       } else if (event.data?.type === 'INCOMING_CALL_PUSH' && event.data.callerPeerId) {
         setRemotePeerId(event.data.callerPeerId)
         setIncomingCallerId(event.data.callerPeerId)
         setCallState('receiving')
+      } else if (event.data?.type === 'INCOMING_CALL_DECLINE') {
+        rejectCall()
       }
     }
     navigator.serviceWorker?.addEventListener('message', handler)
     return () => navigator.serviceWorker?.removeEventListener('message', handler)
-  }, [showToast])
+  }, [showToast, callState, answerCall, makeCall, rejectCall])
 
   /* ── Play synthetic ringtone during incoming call ── */
   useEffect(() => {
@@ -534,7 +546,7 @@ export default function App() {
   useEffect(() => { remotePeerIdRef.current = remotePeerId }, [remotePeerId])
 
   /* ── Make outgoing call ── */
-  const makeCall = async () => {
+  const makeCall = useCallback(async () => {
     if (!remotePeerId.trim() || !peerInstance.current) return
     setCallState('calling')
     try {
@@ -549,10 +561,10 @@ export default function App() {
       cleanupCall()
       showToast('Camera/mic access denied')
     }
-  }
+  }, [remotePeerId, getMedia, attachLocalStream, handleRemoteStream, cleanupCall, showToast])
 
   /* ── Answer incoming call ── */
-  const answerCall = async () => {
+  const answerCall = useCallback(async () => {
     if (!pendingCall.current) return
     const call = pendingCall.current
     pendingCall.current = null
@@ -570,17 +582,17 @@ export default function App() {
       cleanupCall()
       showToast('Camera/mic access denied')
     }
-  }
+  }, [getMedia, attachLocalStream, handleRemoteStream, cancelNotification, cleanupCall, showToast])
 
   /* ── Reject incoming call ── */
-  const rejectCall = () => {
+  const rejectCall = useCallback(() => {
     pendingCall.current?.close()
     pendingCall.current = null
     setCallState('idle')
     showToast('Call declined')
     // Stop push notification alerts
     cancelNotification(peerInstance.current?.id || '')
-  }
+  }, [cancelNotification, showToast])
 
   /* ── End call ── */
   const endCall = () => {

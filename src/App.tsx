@@ -328,6 +328,55 @@ export default function App() {
     cancelNotification(peerInstance.current?.id || '')
   }, [startTimer, cancelNotification])
 
+  /* ── Make outgoing call ── */
+  const makeCall = useCallback(async () => {
+    if (!remotePeerId.trim() || !peerInstance.current) return
+    setCallState('calling')
+    try {
+      const stream = await getMedia()
+      attachLocalStream(stream)
+      const call = peerInstance.current.call(remotePeerId.trim(), stream)
+      activeCall.current = call
+      call.on('stream', handleRemoteStream)
+      call.on('close', () => { cleanupCall(); showToast('Call ended') })
+      call.on('error', () => { cleanupCall(); showToast('Call failed') })
+    } catch {
+      cleanupCall()
+      showToast('Camera/mic access denied')
+    }
+  }, [remotePeerId, getMedia, attachLocalStream, handleRemoteStream, cleanupCall, showToast])
+
+  /* ── Answer incoming call ── */
+  const answerCall = useCallback(async () => {
+    if (!pendingCall.current) return
+    const call = pendingCall.current
+    pendingCall.current = null
+    try {
+      const stream = await getMedia()
+      attachLocalStream(stream)
+      call.answer(stream)
+      activeCall.current = call
+      call.on('stream', handleRemoteStream)
+      call.on('close', () => { cleanupCall(); showToast('Call ended') })
+      call.on('error', () => { cleanupCall(); showToast('Call failed') })
+      // Stop push notification alerts
+      cancelNotification(peerInstance.current?.id || '')
+    } catch {
+      cleanupCall()
+      showToast('Camera/mic access denied')
+    }
+  }, [getMedia, attachLocalStream, handleRemoteStream, cancelNotification, cleanupCall, showToast])
+
+  /* ── Reject incoming call ── */
+  const rejectCall = useCallback(() => {
+    pendingCall.current?.close()
+    pendingCall.current = null
+    setCallState('idle')
+    showToast('Call declined')
+    // Stop push notification alerts
+    cancelNotification(peerInstance.current?.id || '')
+  }, [cancelNotification, showToast])
+
   /* ── PeerJS init ── */
   useEffect(() => {
     const savedId = localStorage.getItem('video_call_peer_id')
@@ -544,55 +593,6 @@ export default function App() {
 
   /* ── Keep remotePeerIdRef in sync with state (avoids stale closure in peer.on) ── */
   useEffect(() => { remotePeerIdRef.current = remotePeerId }, [remotePeerId])
-
-  /* ── Make outgoing call ── */
-  const makeCall = useCallback(async () => {
-    if (!remotePeerId.trim() || !peerInstance.current) return
-    setCallState('calling')
-    try {
-      const stream = await getMedia()
-      attachLocalStream(stream)
-      const call = peerInstance.current.call(remotePeerId.trim(), stream)
-      activeCall.current = call
-      call.on('stream', handleRemoteStream)
-      call.on('close', () => { cleanupCall(); showToast('Call ended') })
-      call.on('error', () => { cleanupCall(); showToast('Call failed') })
-    } catch {
-      cleanupCall()
-      showToast('Camera/mic access denied')
-    }
-  }, [remotePeerId, getMedia, attachLocalStream, handleRemoteStream, cleanupCall, showToast])
-
-  /* ── Answer incoming call ── */
-  const answerCall = useCallback(async () => {
-    if (!pendingCall.current) return
-    const call = pendingCall.current
-    pendingCall.current = null
-    try {
-      const stream = await getMedia()
-      attachLocalStream(stream)
-      call.answer(stream)
-      activeCall.current = call
-      call.on('stream', handleRemoteStream)
-      call.on('close', () => { cleanupCall(); showToast('Call ended') })
-      call.on('error', () => { cleanupCall(); showToast('Call failed') })
-      // Stop push notification alerts
-      cancelNotification(peerInstance.current?.id || '')
-    } catch {
-      cleanupCall()
-      showToast('Camera/mic access denied')
-    }
-  }, [getMedia, attachLocalStream, handleRemoteStream, cancelNotification, cleanupCall, showToast])
-
-  /* ── Reject incoming call ── */
-  const rejectCall = useCallback(() => {
-    pendingCall.current?.close()
-    pendingCall.current = null
-    setCallState('idle')
-    showToast('Call declined')
-    // Stop push notification alerts
-    cancelNotification(peerInstance.current?.id || '')
-  }, [cancelNotification, showToast])
 
   /* ── End call ── */
   const endCall = () => {

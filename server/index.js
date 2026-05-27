@@ -14,8 +14,13 @@ const app = express()
 app.use(cors())
 app.use(express.json())
 
+let vapidSubject = process.env.VAPID_EMAIL || '';
+if (vapidSubject && !vapidSubject.startsWith('mailto:') && !vapidSubject.startsWith('http://') && !vapidSubject.startsWith('https://')) {
+  vapidSubject = `mailto:${vapidSubject}`;
+}
+
 webpush.setVapidDetails(
-  process.env.VAPID_EMAIL,
+  vapidSubject,
   process.env.VAPID_PUBLIC_KEY,
   process.env.VAPID_PRIVATE_KEY
 )

@@ -328,6 +328,9 @@ export default function App() {
       setIncomingCallerId(call.peer)
       setCallState('receiving')
 
+      // Create a sustained vibration pattern (vibrate 1200ms, pause 800ms, repeat 10 times = 20 seconds)
+      const vibratePattern = [1200, 800, 1200, 800, 1200, 800, 1200, 800, 1200, 800, 1200, 800, 1200, 800, 1200, 800, 1200, 800, 1200, 800]
+
       // Background tab notification
       if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
         if ('serviceWorker' in navigator) {
@@ -335,7 +338,7 @@ export default function App() {
             reg.showNotification('Incoming Call', {
               body: `Incoming call from ${call.peer}`,
               icon: '/favicon.svg',
-              vibrate: [200, 100, 200],
+              vibrate: vibratePattern,
               tag: 'incoming-call',
               data: { url: `/?call=${call.peer}` }
             } as any)
@@ -362,7 +365,7 @@ export default function App() {
         if (targetId && myId) {
           notifyCallee(targetId, myId).then(notified => {
             if (notified) {
-              showToast('They\'re offline — sent a ring notification. They\'ll call back shortly.')
+              showToast('They\'re offline · sent a ring notification. They\'ll call back shortly.')
             } else {
               showToast('Peer unavailable and not subscribed to notifications.')
             }
@@ -397,17 +400,81 @@ export default function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [peerId, remotePeerId])
 
-  /* ── Listen for SW postMessage (notification click on already-open tab) ── */
+  /* ── Listen for SW postMessage ── */
   useEffect(() => {
     const handler = (event: MessageEvent) => {
       if (event.data?.type === 'INCOMING_CALL_ANSWER' && event.data.callerPeerId) {
         setRemotePeerId(event.data.callerPeerId)
         showToast(`Incoming call from ${event.data.callerPeerId} — tap Call to answer!`)
+      } else if (event.data?.type === 'INCOMING_CALL_PUSH' && event.data.callerPeerId) {
+        setRemotePeerId(event.data.callerPeerId)
+        setIncomingCallerId(event.data.callerPeerId)
+        setCallState('receiving')
       }
     }
     navigator.serviceWorker?.addEventListener('message', handler)
     return () => navigator.serviceWorker?.removeEventListener('message', handler)
   }, [showToast])
+
+  /* ── Play synthetic ringtone during incoming call ── */
+  useEffect(() => {
+    if (callState !== 'receiving') return
+
+    // Setup Web Audio API Synthetic Ringtone
+    let audioCtx: AudioContext | null = null
+    let intervalId: any = null
+
+    const playRing = () => {
+      try {
+        if (!audioCtx) {
+          audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)()
+        }
+        if (audioCtx.state === 'suspended') {
+          audioCtx.resume()
+        }
+        
+        const osc1 = audioCtx.createOscillator()
+        const osc2 = audioCtx.createOscillator()
+        const gainNode = audioCtx.createGain()
+
+        osc1.type = 'sine'
+        osc2.type = 'sine'
+
+        // U.S. Ringtone frequencies (440Hz + 480Hz)
+        osc1.frequency.setValueAtTime(440, audioCtx.currentTime)
+        osc2.frequency.setValueAtTime(480, audioCtx.currentTime)
+
+        // Fade-in/out pattern: 2 seconds ring, 1 second pause
+        gainNode.gain.setValueAtTime(0, audioCtx.currentTime)
+        gainNode.gain.linearRampToValueAtTime(0.12, audioCtx.currentTime + 0.1)
+        gainNode.gain.setValueAtTime(0.12, audioCtx.currentTime + 1.8)
+        gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 2.0)
+
+        osc1.connect(gainNode)
+        osc2.connect(gainNode)
+        gainNode.connect(audioCtx.destination)
+
+        osc1.start()
+        osc2.start()
+
+        osc1.stop(audioCtx.currentTime + 2.0)
+        osc2.stop(audioCtx.currentTime + 2.0)
+      } catch (err) {
+        console.warn('Could not play ringtone audio:', err)
+      }
+    }
+
+    // Play immediately, then repeat every 3 seconds
+    playRing()
+    intervalId = setInterval(playRing, 3000)
+
+    return () => {
+      clearInterval(intervalId)
+      if (audioCtx) {
+        audioCtx.close().catch(() => {})
+      }
+    }
+  }, [callState])
 
   /* ── Keep remotePeerIdRef in sync with state (avoids stale closure in peer.on) ── */
   useEffect(() => { remotePeerIdRef.current = remotePeerId }, [remotePeerId])

@@ -23,23 +23,39 @@ self.addEventListener('push', (event) => {
     }
   }
 
+  // Create a sustained vibration pattern (vibrate 1200ms, pause 800ms, repeat 10 times = 20 seconds)
+  const vibratePattern = []
+  for (let i = 0; i < 10; i++) {
+    vibratePattern.push(1200, 800)
+  }
+
   event.waitUntil(
-    self.registration.showNotification(data.title, {
-      body: data.body,
-      icon: '/favicon.svg',
-      badge: '/favicon.svg',
-      vibrate: [300, 100, 300, 100, 300],
-      requireInteraction: true,
-      tag: 'incoming-call',
-      data: {
-        callerPeerId: data.callerPeerId,
-        url: data.url || '/'
-      },
-      actions: [
-        { action: 'answer', title: '📞 Answer' },
-        { action: 'decline', title: '✕ Decline' }
-      ]
-    })
+    Promise.all([
+      self.registration.showNotification(data.title, {
+        body: data.body,
+        icon: '/favicon.svg',
+        badge: '/favicon.svg',
+        vibrate: vibratePattern,
+        requireInteraction: true,
+        tag: 'incoming-call',
+        data: {
+          callerPeerId: data.callerPeerId,
+          url: data.url || '/'
+        },
+        actions: [
+          { action: 'answer', title: '📞 Answer' },
+          { action: 'decline', title: '✕ Decline' }
+        ]
+      }),
+      // Notify any open tabs about the incoming call so they can start ringing/showing UI in background
+      self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+        for (const client of clientList) {
+          if (data.callerPeerId) {
+            client.postMessage({ type: 'INCOMING_CALL_PUSH', callerPeerId: data.callerPeerId })
+          }
+        }
+      })
+    ])
   )
 })
 

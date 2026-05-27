@@ -115,6 +115,9 @@ export default function App() {
     new URLSearchParams(window.location.search).get('caller')
   )
 
+  /* ── Configure Push Server URL ── */
+  const PUSH_SERVER_URL = import.meta.env.VITE_PUSH_SERVER_URL || '/push'
+
   /* ── urlBase64ToUint8Array helper for VAPID key ── */
   function urlBase64ToUint8Array(base64String: string) {
     const padding = '='.repeat((4 - (base64String.length % 4)) % 4)
@@ -128,7 +131,7 @@ export default function App() {
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) return false
     if (!('Notification' in window) || Notification.permission !== 'granted') return false
     try {
-      const keyRes = await fetch('/push/vapid-public-key')
+      const keyRes = await fetch(`${PUSH_SERVER_URL}/vapid-public-key`)
       if (!keyRes.ok) throw new Error('Server unreachable')
       const { publicKey } = await keyRes.json()
       const reg = await navigator.serviceWorker.ready
@@ -140,7 +143,7 @@ export default function App() {
           applicationServerKey: urlBase64ToUint8Array(publicKey)
         })
       }
-      const res = await fetch('/push/subscribe', {
+      const res = await fetch(`${PUSH_SERVER_URL}/subscribe`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ peerId: pId, subscription: sub })
@@ -159,7 +162,7 @@ export default function App() {
   /* ── Notify callee via push server when peer is unavailable ── */
   const notifyCallee = async (targetPeerId: string, callerPeerId: string): Promise<boolean> => {
     try {
-      const res = await fetch('/push/notify', {
+      const res = await fetch(`${PUSH_SERVER_URL}/notify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ targetPeerId, callerPeerId })

@@ -173,6 +173,20 @@ export default function App() {
     }
   }
 
+  /* ── Cancel push notification ringing on server ── */
+  const cancelNotification = useCallback(async (targetId: string) => {
+    if (!targetId) return
+    try {
+      await fetch(`${PUSH_SERVER_URL}/cancel-notify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetPeerId: targetId })
+      })
+    } catch (err) {
+      console.warn('[push] Failed to send cancel-notify:', err)
+    }
+  }, [PUSH_SERVER_URL])
+
   /* ── Request Notification Permission ── */
   const requestNotificationPermission = async () => {
     if (!('Notification' in window)) {
@@ -300,7 +314,10 @@ export default function App() {
     }
     setCallState('in-call')
     startTimer()
-  }, [startTimer])
+    // Stop any active push alerts
+    cancelNotification(remotePeerIdRef.current)
+    cancelNotification(peerInstance.current?.id || '')
+  }, [startTimer, cancelNotification])
 
   /* ── PeerJS init ── */
   useEffect(() => {
@@ -510,6 +527,8 @@ export default function App() {
       call.on('stream', handleRemoteStream)
       call.on('close', () => { cleanupCall(); showToast('Call ended') })
       call.on('error', () => { cleanupCall(); showToast('Call failed') })
+      // Stop push notification alerts
+      cancelNotification(peerInstance.current?.id || '')
     } catch {
       cleanupCall()
       showToast('Camera/mic access denied')
@@ -522,10 +541,19 @@ export default function App() {
     pendingCall.current = null
     setCallState('idle')
     showToast('Call declined')
+    // Stop push notification alerts
+    cancelNotification(peerInstance.current?.id || '')
   }
 
   /* ── End call ── */
-  const endCall = () => { cleanupCall(); showToast('Call ended') }
+  const endCall = () => {
+    // If we are dialing, notify push server to stop ringing
+    if (callState === 'calling' && remotePeerId) {
+      cancelNotification(remotePeerId)
+    }
+    cleanupCall()
+    showToast('Call ended')
+  }
 
   /* ── Toggle mute ── */
   const toggleMute = () => {

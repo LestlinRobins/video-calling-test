@@ -38,6 +38,7 @@ self.addEventListener('push', (event) => {
         vibrate: vibratePattern,
         requireInteraction: true,
         tag: 'incoming-call',
+        renotify: true,
         data: {
           callerPeerId: data.callerPeerId,
           url: data.url || '/'

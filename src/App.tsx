@@ -254,6 +254,7 @@ export default function App() {
   const pendingCall = useRef<MediaConnection | null>(null)
   // Ref mirror of remotePeerId to avoid stale closures in peer.on('error')
   const remotePeerIdRef = useRef('')
+  const callingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   /* ── Toast helper ── */
   const showToast = useCallback((msg: string) => {
@@ -291,6 +292,10 @@ export default function App() {
 
   /* ── Clean up call ── */
   const cleanupCall = useCallback(() => {
+    if (callingTimeoutRef.current) {
+      clearTimeout(callingTimeoutRef.current)
+      callingTimeoutRef.current = null
+    }
     activeCall.current?.close()
     activeCall.current = null
     if (localStream.current) {
@@ -308,6 +313,10 @@ export default function App() {
 
   /* ── Attach remote stream ── */
   const handleRemoteStream = useCallback((stream: MediaStream) => {
+    if (callingTimeoutRef.current) {
+      clearTimeout(callingTimeoutRef.current)
+      callingTimeoutRef.current = null
+    }
     if (remoteVideoRef.current) {
       remoteVideoRef.current.srcObject = stream
       remoteVideoRef.current.play().catch(() => {})
@@ -341,6 +350,23 @@ export default function App() {
     })
 
     peer.on('call', (call) => {
+      // Auto-answer if we are already dialing them (auto-accept dial-back connection)
+      if (remotePeerIdRef.current === call.peer) {
+        getMedia().then((stream) => {
+          attachLocalStream(stream)
+          call.answer(stream)
+          activeCall.current = call
+          call.on('stream', handleRemoteStream)
+          call.on('close', () => { cleanupCall(); showToast('Call ended') })
+          call.on('error', () => { cleanupCall(); showToast('Call failed') })
+          cancelNotification(peer.id)
+        }).catch((err) => {
+          console.error('[push] Auto-answer failed:', err)
+          cleanupCall()
+        })
+        return
+      }
+
       pendingCall.current = call
       setIncomingCallerId(call.peer)
       setCallState('receiving')
@@ -382,22 +408,33 @@ export default function App() {
         if (targetId && myId) {
           notifyCallee(targetId, myId).then(notified => {
             if (notified) {
-              showToast('They\'re offline · sent a ring notification. They\'ll call back shortly.')
+              showToast('Ringing their device...')
+              // Start a 30-second timeout for the call
+              const callTimeout = setTimeout(() => {
+                if (remotePeerIdRef.current === targetId) {
+                  cleanupCall()
+                  showToast('No answer')
+                  cancelNotification(targetId)
+                }
+              }, 30000)
+              callingTimeoutRef.current = callTimeout
             } else {
               showToast('Peer unavailable and not subscribed to notifications.')
+              cleanupCall()
             }
           })
         } else {
           showToast('Peer unavailable')
+          cleanupCall()
         }
       } else {
         showToast(`Connection error: ${(err as any).type}`)
+        cleanupCall()
       }
-      cleanupCall()
     })
 
     return () => { peer.destroy(); peerInstance.current = null }
-  }, [showToast, cleanupCall])
+  }, [showToast, cleanupCall, getMedia, attachLocalStream, handleRemoteStream, cancelNotification, peerId])
 
   /* ── Auto-dial once peerId + remotePeerId are both ready (share link) ── */
   useEffect(() => {
